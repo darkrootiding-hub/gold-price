@@ -1,0 +1,33 @@
+# .github/workflows/gold-update.yml
+# Runs every day at 9:00 AM Nepal Time (NPT = UTC+5:45 → 3:15 AM UTC)
+
+name: Daily Gold Price Update
+
+on:
+  schedule:
+    - cron: '45 5 * * *'   # 5:45 AM UTC = 11:30 AM NPT every day
+
+  workflow_dispatch:         # Also allows manual trigger from GitHub UI
+
+jobs:
+  fetch-and-update:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Fetch gold price and update Firebase
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
+        run: node fetch-gold.js
+
+      - name: Log completion
+        run: echo "✅ Gold price updated at $(date -u)"
