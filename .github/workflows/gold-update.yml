@@ -1,5 +1,5 @@
 # .github/workflows/gold-update.yml
-# Runs TWICE daily — 11:30 AM NPT + 7:00 PM NPT
+# Runs TWICE daily — 10:30 AM NPT + 11:10 AM NPT
 # NPT = UTC+5:45
 # GitHub typically delays 15-30min, so scheduled slightly early
 
@@ -7,8 +7,8 @@ name: Daily Gold Price Update
 
 on:
   schedule:
-    - cron: '45 5 * * *'   # 5:45 AM UTC ≈ 11:30 AM NPT (morning update)
-    - cron: '15 13 * * *'  # 1:15 PM UTC ≈ 7:00 PM NPT (evening update)
+    - cron: '45 4 * * *'   # 4:45 AM UTC ≈ 10:30 AM NPT (first update)
+    - cron: '25 5 * * *'   # 5:25 AM UTC ≈ 11:10 AM NPT (second update)
 
   workflow_dispatch:         # Manual trigger from GitHub UI
 
