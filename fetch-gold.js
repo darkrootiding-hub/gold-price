@@ -38,83 +38,44 @@ function get(url) {
 }
 
 // ── Parse gold + silver ──
-// Actual HTML structure from fenegosida.org:
-//   <div class="rate-gold post">
-//     <p>FINE GOLD<br><span>per 1 tola</span><br><br>रु</span> <b>294000</b></p>
-//   </div>
-//   <div class="rate-gold post">
-//     <p>TEJABI GOLD<br><span>per 1 tola</span><br><br>रु</span> <b>0</b></p>
-//   </div>
-//   <div class="rate-silver post">
-//     <p>SILVER<br><span>per 1 tola</span><br><br>रु</span> <b>4830</b></p>
-//   </div>
+// Page layout:
+//   [gms section]  FINE GOLD <b>252060</b>  TEJABI <b>0</b>  SILVER <b>4141</b>
+//   [tola section] FINE GOLD <b>294000</b>  TEJABI <b>0</b>  SILVER <b>4830</b>
+//
+// Key: page has a tab toggle "* gms\n* tola"
+// Everything AFTER "* tola" line is the tola section
+// We extract all <b>DIGITS</b> from tola section only:
+//   index 0 = Fine Gold tola
+//   index 1 = Tejabi tola (skip)
+//   index 2 = Silver tola
 
 function parsePrices(html) {
   let gold = null, silver = null;
 
-  // ── GOLD: extract <b> value from FINE GOLD block ──
-  const goldBlock = html.match(/FINE GOLD[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
-  if (goldBlock) {
-    const p = parseInt(goldBlock[1]);
-    if (p > 100000 && p < 600000) {
-      gold = p;
-      console.log('✅ Gold (Fine 9999) per tola:', gold);
-    }
+  // Split at the tola section marker
+  // The page has "* tola" as a list item separating gms from tola prices
+  const tolaSplit = html.split(/\*\s*tola/i);
+  const tolaSection = tolaSplit.length > 1 ? tolaSplit[tolaSplit.length - 1] : html;
+
+  // Extract all <b>NUMBER</b> from tola section
+  const bTags = [...tolaSection.matchAll(/<b>(\d+)<\/b>/g)].map(m => parseInt(m[1]));
+  console.log('📊 Tola section <b> values:', bTags);
+
+  // index 0 = Fine Gold, index 1 = Tejabi, index 2 = Silver
+  if (bTags.length >= 1 && bTags[0] > 100000 && bTags[0] < 600000) {
+    gold = bTags[0];
+    console.log('✅ Gold per tola:', gold);
+  }
+  if (bTags.length >= 3 && bTags[2] > 500 && bTags[2] < 50000) {
+    silver = bTags[2];
+    console.log('✅ Silver per tola:', silver);
   }
 
-  // Gold fallback: any 6-digit <b> tag
+  // Gold fallback: any 6-digit <b> in full HTML
   if (!gold) {
-    const allB = [...html.matchAll(/<b>(\d+)<\/b>/g)];
-    for (const m of allB) {
+    for (const m of [...html.matchAll(/<b>(\d+)<\/b>/g)]) {
       const p = parseInt(m[1]);
-      if (p > 100000 && p < 600000) {
-        gold = p;
-        console.log('⚠️  Gold <b> fallback:', gold);
-        break;
-      }
-    }
-  }
-
-  // ── SILVER: must get per 1 tola, not per 10 grm ──
-  // Page has SILVER twice: first = per 10 grm, second = per 1 tola
-  // Target the SECOND occurrence of SILVER <b> tag
-
-  // Strategy 1: find "rate-silver" class div (tola section only)
-  const silverDiv = html.match(/rate-silver[\s\S]{0,400}?<b>([\d]+)<\/b>/i);
-  if (silverDiv) {
-    const p = parseInt(silverDiv[1]);
-    if (p > 500 && p < 50000) {
-      silver = p;
-      console.log('✅ Silver per tola (rate-silver div):', silver);
-    }
-  }
-
-  // Strategy 2: get ALL SILVER <b> matches, pick the last valid one (tola > 10grm)
-  if (!silver) {
-    const allSilver = [...html.matchAll(/SILVER[\s\S]{0,300}?<b>([\d]+)<\/b>/gi)];
-    // Last match is the tola price
-    for (let i = allSilver.length - 1; i >= 0; i--) {
-      const p = parseInt(allSilver[i][1]);
-      if (p > 500 && p < 50000) {
-        silver = p;
-        console.log('⚠️  Silver fallback (last match):', silver);
-        break;
-      }
-    }
-  }
-
-  // Strategy 3: find "per 1 tola" then grab next <b> after SILVER keyword
-  if (!silver) {
-    const tolaSection = html.match(/per 1 tola[\s\S]{0,2000}/i);
-    if (tolaSection) {
-      const silverInTola = tolaSection[0].match(/SILVER[\s\S]{0,200}?<b>([\d]+)<\/b>/i);
-      if (silverInTola) {
-        const p = parseInt(silverInTola[1]);
-        if (p > 500 && p < 50000) {
-          silver = p;
-          console.log('⚠️  Silver per-1-tola section fallback:', silver);
-        }
-      }
+      if (p > 100000 && p < 600000) { gold = p; console.log('⚠️  Gold fallback:', gold); break; }
     }
   }
 
