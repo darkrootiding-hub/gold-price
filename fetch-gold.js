@@ -37,115 +37,76 @@ function get(url) {
   });
 }
 
-// ── Parse both gold and silver prices ──
+// ── Parse gold + silver from fenegosida.org ──
+//
+// Page structure (tola section):
+//   FINE GOLD (9999)  per 1 tola  रु **294000**
+//   TEJABI GOLD       per 1 tola  रु **0**
+//   SILVER            per 1 tola  रु **4830**
+//
+// Strategy: find the "tola" section of the page, then extract
+// all रु **XXXXX** values in order → [0]=gold, [1]=tejabi, [2]=silver
+
 function parsePrices(html) {
   let gold = null, silver = null;
 
-  // ── GOLD: FINE GOLD (9999) per 1 tola ──
-  const fine = html.match(/FINE GOLD[\s\S]{0,300}?per 1 tola[\s\S]{0,100}?[\u0930\u0941\s\*]+([\d]+)/);
-  if (fine) {
-    const p = parseInt(fine[1]);
+  // Isolate the "per 1 tola" block — everything after "per 1 tola" first occurrence
+  const tolaIdx = html.indexOf('per 1 tola');
+  if (tolaIdx === -1) {
+    console.log('⚠️  Could not find "per 1 tola" section');
+    return { gold, silver };
+  }
+  const tolaBlock = html.slice(tolaIdx, tolaIdx + 2000);
+  console.log('📋 Tola block preview:', tolaBlock.slice(0, 300).replace(/\n/g,' '));
+
+  // Extract all रु **DIGITS** in order from tola block
+  // Matches: रु **294000** or रु **4830** etc.
+  const ruPattern = /[\u0930\u0941]\s*\*{0,2}\s*(\d+)\s*\*{0,2}/g;
+  const allPrices = [];
+  let m;
+  while ((m = ruPattern.exec(tolaBlock)) !== null) {
+    allPrices.push(parseInt(m[1]));
+  }
+  console.log('📊 All tola prices found:', allPrices);
+
+  // Index 0 = Fine Gold, Index 1 = Tejabi, Index 2 = Silver
+  if (allPrices.length >= 1) {
+    const p = allPrices[0];
     if (p > 100000 && p < 600000) {
       gold = p;
-      console.log('✅ Fine Gold (9999) per tola:', gold);
+      console.log('✅ Gold (Fine 9999) per tola:', gold);
     }
   }
-
-  // Gold fallback: रु **XXXXXX**
-  if (!gold) {
-    for (const m of [...html.matchAll(/[\u0930\u0941]\s*\*{0,2}(\d{5,7})\*{0,2}/g)]) {
-      const p = parseInt(m[1]);
-      if (p > 100000 && p < 600000) { gold = p; console.log('✅ Gold रु pattern:', gold); break; }
-    }
-  }
-
-  // Gold fallback: Nrs XXXXXX
-  if (!gold) {
-    for (const m of [...html.matchAll(/Nrs\s*\*{0,2}(\d{5,7})\*{0,2}/gi)]) {
-      const p = parseInt(m[1]);
-      if (p > 100000 && p < 600000) { gold = p; console.log('✅ Gold Nrs pattern:', gold); break; }
-    }
-  }
-
-  // Gold fallback: 6-digit near "tola"
-  if (!gold) {
-    const block = html.match(/per 1 tola[\s\S]{0,200}/i);
-    if (block) {
-      const nums = [...block[0].matchAll(/(\d{6})/g)].map(m => parseInt(m[1]));
-      const valid = nums.filter(n => n > 100000 && n < 600000);
-      if (valid.length) { gold = valid[0]; console.log('⚠️  Gold tola fallback:', gold); }
-    }
-  }
-
-  // ── SILVER: SILVER per 1 tola ──
-  // fenegosida shows: SILVER per 1 tola रु 5270
-  const silBlock = html.match(/SILVER[\s\S]{0,300}?per 1 tola[\s\S]{0,100}?[\u0930\u0941\s\*]+([\d]+)/);
-  if (silBlock) {
-    const p = parseInt(silBlock[1]);
-    if (p > 1000 && p < 50000) {
+  if (allPrices.length >= 3) {
+    const p = allPrices[2];
+    if (p > 500 && p < 50000) {
       silver = p;
       console.log('✅ Silver per tola:', silver);
     }
   }
 
-  // Silver fallback: find "SILVER" block then grab 4-5 digit number
+  // Gold fallback: Nrs **XXXXXX** pattern
+  if (!gold) {
+    const nrsPattern = /Nrs\s*\*{0,2}\s*(\d{5,7})\s*\*{0,2}/gi;
+    while ((m = nrsPattern.exec(html)) !== null) {
+      const p = parseInt(m[1]);
+      if (p > 100000 && p < 600000) { gold = p; console.log('⚠️  Gold Nrs fallback:', gold); break; }
+    }
+  }
+
+  // Silver fallback: find Nrs **4XXX** range (silver ~3000-20000)
   if (!silver) {
-    const silverSection = html.match(/SILVER[\s\S]{0,500}/i);
-    if (silverSection) {
-      const nums = [...silverSection[0].matchAll(/\b(\d{4,5})\b/g)].map(m => parseInt(m[1]));
-      const valid = nums.filter(n => n > 1000 && n < 50000);
-      if (valid.length) { silver = valid[0]; console.log('⚠️  Silver fallback:', silver); }
+    const nrsAll = [...html.matchAll(/Nrs\s*\*{0,2}\s*(\d{3,5})\s*\*{0,2}/gi)];
+    for (const mm of nrsAll) {
+      const p = parseInt(mm[1]);
+      if (p > 500 && p < 20000) { silver = p; console.log('⚠️  Silver Nrs fallback:', silver); break; }
     }
   }
 
   return { gold, silver };
 }
 
-// ── Write gold to global_data/gold_info ──
-function writeGold(price) {
-  return writeDoc('global_data/gold_info', {
-    rate:        { integerValue: String(price) },
-    updatedBy:   { stringValue: 'auto@github-actions' },
-    lastUpdated: { stringValue: new Date().toISOString() },
-    source:      { stringValue: 'fenegosida.org' },
-    note:        { stringValue: 'Fine Gold (9999) per tola' }
-  });
-}
-
-// ── Write silver to global_data/silver_info ──
-function writeSilver(price) {
-  return writeDoc('global_data/silver_info', {
-    rate:        { integerValue: String(price) },
-    updatedBy:   { stringValue: 'auto@github-actions' },
-    lastUpdated: { stringValue: new Date().toISOString() },
-    source:      { stringValue: 'fenegosida.org' },
-    note:        { stringValue: 'Silver per tola' }
-  });
-}
-
-// ── Log to gold_history ──
-function logGoldHistory(price) {
-  return postDoc('gold_history', {
-    rate:      { integerValue: String(price) },
-    updatedBy: { stringValue: 'auto@github-actions' },
-    timestamp: { stringValue: new Date().toISOString() },
-    source:    { stringValue: 'fenegosida.org' },
-    note:      { stringValue: 'Fine Gold (9999) per tola' }
-  });
-}
-
-// ── Log to silver_history ──
-function logSilverHistory(price) {
-  return postDoc('silver_history', {
-    rate:      { integerValue: String(price) },
-    updatedBy: { stringValue: 'auto@github-actions' },
-    timestamp: { stringValue: new Date().toISOString() },
-    source:    { stringValue: 'fenegosida.org' },
-    note:      { stringValue: 'Silver per tola' }
-  });
-}
-
-// ── PATCH a Firestore document ──
+// ── Write to Firestore (PATCH = update/create) ──
 function writeDoc(docPath, fields) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ fields });
@@ -162,21 +123,20 @@ function writeDoc(docPath, fields) {
       res.on('data', c => data += c);
       res.on('end', () => {
         if (res.statusCode === 200) resolve(JSON.parse(data));
-        else reject(new Error('Firestore PATCH error ' + res.statusCode + ': ' + data));
+        else reject(new Error('Firestore PATCH ' + res.statusCode + ': ' + data));
       });
     });
     req.on('error', reject);
-    req.write(body);
-    req.end();
+    req.write(body); req.end();
   });
 }
 
-// ── POST to a Firestore collection (auto-ID) ──
-function postDoc(collection, fields) {
-  return new Promise((resolve, reject) => {
+// ── Log to history collection (POST = auto-ID) ──
+function postDoc(col, fields) {
+  return new Promise((resolve) => {
     const body = JSON.stringify({ fields });
     const urlObj = new URL(
-      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${collection}?key=${API_KEY}`
+      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${col}?key=${API_KEY}`
     );
     const req = https.request({
       hostname: urlObj.hostname,
@@ -189,9 +149,18 @@ function postDoc(collection, fields) {
       res.on('end', () => resolve(data));
     });
     req.on('error', e => resolve('skipped: ' + e.message));
-    req.write(body);
-    req.end();
+    req.write(body); req.end();
   });
+}
+
+function makeFields(rate, note) {
+  return {
+    rate:        { integerValue: String(rate) },
+    updatedBy:   { stringValue: 'auto@github-actions' },
+    lastUpdated: { stringValue: new Date().toISOString() },
+    source:      { stringValue: 'fenegosida.org' },
+    note:        { stringValue: note }
+  };
 }
 
 // ── Main ──
@@ -202,11 +171,10 @@ async function main() {
 
   let html = null;
   try {
-    console.log('🌐 Fetching https://fenegosida.org/');
     html = await get('https://fenegosida.org/');
     console.log('📄 Page size:', Math.round(html.length / 1024) + 'KB');
     if (!html.includes('FINE GOLD') && !html.includes('tola')) {
-      throw new Error('No gold data found — site structure may have changed.');
+      throw new Error('No gold data found — site may have changed.');
     }
   } catch (e) {
     console.error('❌ Fetch failed:', e.message);
@@ -222,36 +190,29 @@ async function main() {
   }
   console.log('💰 Gold (per tola): NPR', gold.toLocaleString());
   try {
-    await writeGold(gold);
-    console.log('🔥 Gold written to Firestore → global_data/gold_info');
+    await writeDoc('global_data/gold_info', makeFields(gold, 'Fine Gold (9999) per tola'));
+    console.log('🔥 Gold → Firestore: global_data/gold_info');
   } catch (e) {
-    console.error('❌ Gold Firestore write failed:', e.message);
-    process.exit(1);
+    console.error('❌ Gold write failed:', e.message); process.exit(1);
   }
   try {
-    await logGoldHistory(gold);
-    console.log('📋 Gold logged to gold_history');
-  } catch (e) {
-    console.log('⚠️  Gold history skipped:', e.message);
-  }
+    await postDoc('gold_history', { ...makeFields(gold, 'Fine Gold (9999) per tola'), timestamp: { stringValue: new Date().toISOString() } });
+    console.log('📋 Gold → gold_history');
+  } catch (e) { console.log('⚠️  Gold history skipped:', e.message); }
 
   // ── SILVER ──
   if (!silver) {
-    console.warn('⚠️  Could not parse silver price — skipping silver update.');
+    console.warn('⚠️  Could not parse silver price — skipping.');
   } else {
     console.log('🥈 Silver (per tola): NPR', silver.toLocaleString());
     try {
-      await writeSilver(silver);
-      console.log('🔥 Silver written to Firestore → global_data/silver_info');
-    } catch (e) {
-      console.error('❌ Silver Firestore write failed:', e.message);
-    }
+      await writeDoc('global_data/silver_info', makeFields(silver, 'Silver per tola'));
+      console.log('🔥 Silver → Firestore: global_data/silver_info');
+    } catch (e) { console.error('❌ Silver write failed:', e.message); }
     try {
-      await logSilverHistory(silver);
-      console.log('📋 Silver logged to silver_history');
-    } catch (e) {
-      console.log('⚠️  Silver history skipped:', e.message);
-    }
+      await postDoc('silver_history', { ...makeFields(silver, 'Silver per tola'), timestamp: { stringValue: new Date().toISOString() } });
+      console.log('📋 Silver → silver_history');
+    } catch (e) { console.log('⚠️  Silver history skipped:', e.message); }
   }
 
   console.log('');
