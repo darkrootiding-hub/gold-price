@@ -75,24 +75,45 @@ function parsePrices(html) {
     }
   }
 
-  // ── SILVER: extract <b> value from SILVER block ──
-  const silverBlock = html.match(/SILVER[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
-  if (silverBlock) {
-    const p = parseInt(silverBlock[1]);
+  // ── SILVER: must get per 1 tola, not per 10 grm ──
+  // Page has SILVER twice: first = per 10 grm, second = per 1 tola
+  // Target the SECOND occurrence of SILVER <b> tag
+
+  // Strategy 1: find "rate-silver" class div (tola section only)
+  const silverDiv = html.match(/rate-silver[\s\S]{0,400}?<b>([\d]+)<\/b>/i);
+  if (silverDiv) {
+    const p = parseInt(silverDiv[1]);
     if (p > 500 && p < 50000) {
       silver = p;
-      console.log('✅ Silver per tola:', silver);
+      console.log('✅ Silver per tola (rate-silver div):', silver);
     }
   }
 
-  // Silver fallback: find rate-silver div
+  // Strategy 2: get ALL SILVER <b> matches, pick the last valid one (tola > 10grm)
   if (!silver) {
-    const silverDiv = html.match(/rate-silver[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
-    if (silverDiv) {
-      const p = parseInt(silverDiv[1]);
+    const allSilver = [...html.matchAll(/SILVER[\s\S]{0,300}?<b>([\d]+)<\/b>/gi)];
+    // Last match is the tola price
+    for (let i = allSilver.length - 1; i >= 0; i--) {
+      const p = parseInt(allSilver[i][1]);
       if (p > 500 && p < 50000) {
         silver = p;
-        console.log('⚠️  Silver rate-silver fallback:', silver);
+        console.log('⚠️  Silver fallback (last match):', silver);
+        break;
+      }
+    }
+  }
+
+  // Strategy 3: find "per 1 tola" then grab next <b> after SILVER keyword
+  if (!silver) {
+    const tolaSection = html.match(/per 1 tola[\s\S]{0,2000}/i);
+    if (tolaSection) {
+      const silverInTola = tolaSection[0].match(/SILVER[\s\S]{0,200}?<b>([\d]+)<\/b>/i);
+      if (silverInTola) {
+        const p = parseInt(silverInTola[1]);
+        if (p > 500 && p < 50000) {
+          silver = p;
+          console.log('⚠️  Silver per-1-tola section fallback:', silver);
+        }
       }
     }
   }
