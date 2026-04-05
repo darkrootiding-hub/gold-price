@@ -37,76 +37,70 @@ function get(url) {
   });
 }
 
-// ── Parse gold + silver from fenegosida.org ──
-//
-// Page structure (tola section):
-//   FINE GOLD (9999)  per 1 tola  रु **294000**
-//   TEJABI GOLD       per 1 tola  रु **0**
-//   SILVER            per 1 tola  रु **4830**
-//
-// Strategy: find the "tola" section of the page, then extract
-// all रु **XXXXX** values in order → [0]=gold, [1]=tejabi, [2]=silver
+// ── Parse gold + silver ──
+// Actual HTML structure from fenegosida.org:
+//   <div class="rate-gold post">
+//     <p>FINE GOLD<br><span>per 1 tola</span><br><br>रु</span> <b>294000</b></p>
+//   </div>
+//   <div class="rate-gold post">
+//     <p>TEJABI GOLD<br><span>per 1 tola</span><br><br>रु</span> <b>0</b></p>
+//   </div>
+//   <div class="rate-silver post">
+//     <p>SILVER<br><span>per 1 tola</span><br><br>रु</span> <b>4830</b></p>
+//   </div>
 
 function parsePrices(html) {
   let gold = null, silver = null;
 
-  // Isolate the "per 1 tola" block — everything after "per 1 tola" first occurrence
-  const tolaIdx = html.indexOf('per 1 tola');
-  if (tolaIdx === -1) {
-    console.log('⚠️  Could not find "per 1 tola" section');
-    return { gold, silver };
-  }
-  const tolaBlock = html.slice(tolaIdx, tolaIdx + 2000);
-  console.log('📋 Tola block preview:', tolaBlock.slice(0, 300).replace(/\n/g,' '));
-
-  // Extract all रु **DIGITS** in order from tola block
-  // Matches: रु **294000** or रु **4830** etc.
-  const ruPattern = /[\u0930\u0941]\s*\*{0,2}\s*(\d+)\s*\*{0,2}/g;
-  const allPrices = [];
-  let m;
-  while ((m = ruPattern.exec(tolaBlock)) !== null) {
-    allPrices.push(parseInt(m[1]));
-  }
-  console.log('📊 All tola prices found:', allPrices);
-
-  // Index 0 = Fine Gold, Index 1 = Tejabi, Index 2 = Silver
-  if (allPrices.length >= 1) {
-    const p = allPrices[0];
+  // ── GOLD: extract <b> value from FINE GOLD block ──
+  const goldBlock = html.match(/FINE GOLD[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
+  if (goldBlock) {
+    const p = parseInt(goldBlock[1]);
     if (p > 100000 && p < 600000) {
       gold = p;
       console.log('✅ Gold (Fine 9999) per tola:', gold);
     }
   }
-  if (allPrices.length >= 3) {
-    const p = allPrices[2];
+
+  // Gold fallback: any 6-digit <b> tag
+  if (!gold) {
+    const allB = [...html.matchAll(/<b>(\d+)<\/b>/g)];
+    for (const m of allB) {
+      const p = parseInt(m[1]);
+      if (p > 100000 && p < 600000) {
+        gold = p;
+        console.log('⚠️  Gold <b> fallback:', gold);
+        break;
+      }
+    }
+  }
+
+  // ── SILVER: extract <b> value from SILVER block ──
+  const silverBlock = html.match(/SILVER[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
+  if (silverBlock) {
+    const p = parseInt(silverBlock[1]);
     if (p > 500 && p < 50000) {
       silver = p;
       console.log('✅ Silver per tola:', silver);
     }
   }
 
-  // Gold fallback: Nrs **XXXXXX** pattern
-  if (!gold) {
-    const nrsPattern = /Nrs\s*\*{0,2}\s*(\d{5,7})\s*\*{0,2}/gi;
-    while ((m = nrsPattern.exec(html)) !== null) {
-      const p = parseInt(m[1]);
-      if (p > 100000 && p < 600000) { gold = p; console.log('⚠️  Gold Nrs fallback:', gold); break; }
-    }
-  }
-
-  // Silver fallback: find Nrs **4XXX** range (silver ~3000-20000)
+  // Silver fallback: find rate-silver div
   if (!silver) {
-    const nrsAll = [...html.matchAll(/Nrs\s*\*{0,2}\s*(\d{3,5})\s*\*{0,2}/gi)];
-    for (const mm of nrsAll) {
-      const p = parseInt(mm[1]);
-      if (p > 500 && p < 20000) { silver = p; console.log('⚠️  Silver Nrs fallback:', silver); break; }
+    const silverDiv = html.match(/rate-silver[\s\S]{0,300}?<b>([\d]+)<\/b>/i);
+    if (silverDiv) {
+      const p = parseInt(silverDiv[1]);
+      if (p > 500 && p < 50000) {
+        silver = p;
+        console.log('⚠️  Silver rate-silver fallback:', silver);
+      }
     }
   }
 
   return { gold, silver };
 }
 
-// ── Write to Firestore (PATCH = update/create) ──
+// ── Firestore PATCH (update/create doc) ──
 function writeDoc(docPath, fields) {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({ fields });
@@ -131,7 +125,7 @@ function writeDoc(docPath, fields) {
   });
 }
 
-// ── Log to history collection (POST = auto-ID) ──
+// ── Firestore POST (add to collection, auto-ID) ──
 function postDoc(col, fields) {
   return new Promise((resolve) => {
     const body = JSON.stringify({ fields });
@@ -191,12 +185,13 @@ async function main() {
   console.log('💰 Gold (per tola): NPR', gold.toLocaleString());
   try {
     await writeDoc('global_data/gold_info', makeFields(gold, 'Fine Gold (9999) per tola'));
-    console.log('🔥 Gold → Firestore: global_data/gold_info');
+    console.log('🔥 Gold → global_data/gold_info');
   } catch (e) {
-    console.error('❌ Gold write failed:', e.message); process.exit(1);
+    console.error('❌ Gold write failed:', e.message);
+    process.exit(1);
   }
   try {
-    await postDoc('gold_history', { ...makeFields(gold, 'Fine Gold (9999) per tola'), timestamp: { stringValue: new Date().toISOString() } });
+    await postDoc('gold_history', makeFields(gold, 'Fine Gold (9999) per tola'));
     console.log('📋 Gold → gold_history');
   } catch (e) { console.log('⚠️  Gold history skipped:', e.message); }
 
@@ -207,20 +202,20 @@ async function main() {
     console.log('🥈 Silver (per tola): NPR', silver.toLocaleString());
     try {
       await writeDoc('global_data/silver_info', makeFields(silver, 'Silver per tola'));
-      console.log('🔥 Silver → Firestore: global_data/silver_info');
+      console.log('🔥 Silver → global_data/silver_info');
     } catch (e) { console.error('❌ Silver write failed:', e.message); }
     try {
-      await postDoc('silver_history', { ...makeFields(silver, 'Silver per tola'), timestamp: { stringValue: new Date().toISOString() } });
+      await postDoc('silver_history', makeFields(silver, 'Silver per tola'));
       console.log('📋 Silver → silver_history');
     } catch (e) { console.log('⚠️  Silver history skipped:', e.message); }
   }
 
   console.log('');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('✅ Done!');
   console.log('   gold_info.rate   =', gold);
   if (silver) console.log('   silver_info.rate =', silver);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
 }
 
 main();
