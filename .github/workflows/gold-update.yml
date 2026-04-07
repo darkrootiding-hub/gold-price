@@ -1,15 +1,16 @@
 # .github/workflows/gold-update.yml
 # Runs TWICE daily — 10:30 AM NPT + 11:10 AM NPT
-# Fetches both gold AND silver from fenegosida.org
+# NPT = UTC+5:45
+# GitHub typically delays 15-30min, so scheduled slightly early
 
 name: Daily Gold Price Update
 
 on:
   schedule:
-    - cron: '45 4 * * *'   # 4:45 AM UTC ≈ 10:30 AM NPT
-    - cron: '25 5 * * *'   # 5:25 AM UTC ≈ 11:10 AM NPT
+    - cron: '45 4 * * *'   # 4:45 AM UTC ≈ 10:30 AM NPT (first update)
+    - cron: '25 5 * * *'   # 5:25 AM UTC ≈ 11:10 AM NPT (second update)
 
-  workflow_dispatch:
+  workflow_dispatch:         # Manual trigger from GitHub UI
 
 jobs:
   fetch-and-update:
@@ -31,11 +32,5 @@ jobs:
           FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
         run: node fetch-gold.js
 
-      - name: Fetch silver price and update Firebase
-        env:
-          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
-          FIREBASE_API_KEY: ${{ secrets.FIREBASE_API_KEY }}
-        run: node fetch-silver.js
-
       - name: Log completion
-        run: echo "✅ Gold + Silver updated at $(date -u)"
+        run: echo "✅ Gold price updated at $(date -u)"
