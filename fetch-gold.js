@@ -1,9 +1,10 @@
 // fetch-gold.js
-// Fetches gold + silver price from fenegosida.org
-// Runs via GitHub Actions twice daily — 10:30 AM + 11:10 AM NPT
+// Fetches gold price from fenegosida.org (official Nepal Gold & Silver Dealers Federation)
+// Runs via GitHub Actions twice daily — 11:30 AM + 7:00 PM NPT
 
 const https = require('https');
 
+// ── Firebase config (injected from GitHub Secrets) ──
 const PROJECT_ID = process.env.FIREBASE_PROJECT_ID;
 const API_KEY    = process.env.FIREBASE_API_KEY;
 
@@ -12,17 +13,13 @@ if (!PROJECT_ID || !API_KEY) {
   process.exit(1);
 }
 
-// ── Fetch URL with multiple proxy fallbacks ──
-// fenegosida.org blocks GitHub Actions IPs on scheduled runs.
-// We route through CORS proxies to bypass this.
+// ── Fetch URL (follows redirects) ──
 function get(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept':     'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': 'en-US,en;q=0.5',
-        'Cache-Control':   'no-cache',
+        'User-Agent': 'Mozilla/5.0 (compatible; GoldBot/1.0)',
+        'Accept':     'text/html,application/xhtml+xml',
       }
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -37,238 +34,178 @@ function get(url) {
       res.on('end', () => resolve(data));
     });
     req.on('error', reject);
-    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
   });
 }
 
-// ── Fetch fenegosida via multiple strategies ──
-async function fetchFenegosida() {
-  const TARGET = 'https://fenegosida.org/';
-
-  // Strategy 1: Direct fetch with real browser headers
-  try {
-    console.log('🌐 Strategy 1: Direct fetch...');
-    const html = await get(TARGET);
-    if (html && html.includes('FINE GOLD')) {
-      console.log('✅ Direct fetch succeeded');
-      return html;
+// ── Parse gold price from fenegosida.org ──
+function parseGoldPrice(html) {
+  // Primary: "FINE GOLD (9999) per 1 tola रु 309400"
+  // HTML pattern: रु **309400**
+  const fine = html.match(/FINE GOLD[\s\S]{0,300}?per 1 tola[\s\S]{0,100}?[\u0930\u0941\s\*]+([\d]+)/);
+  if (fine) {
+    const price = parseInt(fine[1]);
+    if (price > 100000 && price < 600000) {
+      console.log('✅ Fine Gold (9999) per tola found:', price);
+      return price;
     }
-  } catch (e) {
-    console.log('⚠️  Direct fetch failed:', e.message);
   }
 
-  // Strategy 2: allorigins proxy
-  try {
-    console.log('🌐 Strategy 2: allorigins proxy...');
-    const html = await get('https://api.allorigins.win/raw?url=' + encodeURIComponent(TARGET));
-    if (html && html.includes('FINE GOLD')) {
-      console.log('✅ allorigins succeeded');
-      return html;
+  // Strategy 2: रु **XXXXXX** pattern (Nepali rupee symbol before price)
+  const ruMatches = [...html.matchAll(/[\u0930\u0941]\s*\*{0,2}(\d{5,7})\*{0,2}/g)];
+  for (const m of ruMatches) {
+    const price = parseInt(m[1]);
+    if (price > 100000 && price < 600000) {
+      console.log('✅ रु pattern price found:', price);
+      return price;
     }
-  } catch (e) {
-    console.log('⚠️  allorigins failed:', e.message);
   }
 
-  // Strategy 3: corsproxy.io
-  try {
-    console.log('🌐 Strategy 3: corsproxy.io...');
-    const html = await get('https://corsproxy.io/?' + encodeURIComponent(TARGET));
-    if (html && html.includes('FINE GOLD')) {
-      console.log('✅ corsproxy.io succeeded');
-      return html;
+  // Strategy 3: Nrs XXXXXX pattern
+  const nrsMatches = [...html.matchAll(/Nrs\s*\*{0,2}(\d{5,7})\*{0,2}/gi)];
+  for (const m of nrsMatches) {
+    const price = parseInt(m[1]);
+    if (price > 100000 && price < 600000) {
+      console.log('✅ Nrs pattern price found:', price);
+      return price;
     }
-  } catch (e) {
-    console.log('⚠️  corsproxy.io failed:', e.message);
   }
 
-  // Strategy 4: codetabs proxy
-  try {
-    console.log('🌐 Strategy 4: codetabs proxy...');
-    const html = await get('https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(TARGET));
-    if (html && html.includes('FINE GOLD')) {
-      console.log('✅ codetabs succeeded');
-      return html;
+  // Strategy 4: any 6-digit number in gold range after "tola"
+  const tolaBlock = html.match(/per 1 tola[\s\S]{0,200}/i);
+  if (tolaBlock) {
+    const nums = [...tolaBlock[0].matchAll(/(\d{6})/g)].map(m => parseInt(m[1]));
+    const valid = nums.filter(n => n > 100000 && n < 600000);
+    if (valid.length) {
+      console.log('⚠️  Tola block fallback:', valid[0]);
+      return valid[0];
     }
-  } catch (e) {
-    console.log('⚠️  codetabs failed:', e.message);
   }
 
-  // Strategy 5: thingproxy
-  try {
-    console.log('🌐 Strategy 5: thingproxy...');
-    const html = await get('https://thingproxy.freeboard.io/fetch/' + TARGET);
-    if (html && html.includes('FINE GOLD')) {
-      console.log('✅ thingproxy succeeded');
-      return html;
-    }
-  } catch (e) {
-    console.log('⚠️  thingproxy failed:', e.message);
-  }
-
-  throw new Error('All 5 fetch strategies failed. fenegosida.org may be down.');
+  return null;
 }
 
-// ── Parse gold + silver ──
-// Page layout:
-//   [gms section]  FINE GOLD <b>252060</b>  TEJABI <b>0</b>  SILVER <b>4141</b>
-//   [tola section] FINE GOLD <b>294000</b>  TEJABI <b>0</b>  SILVER <b>4830</b>
-//
-// Key: page has a tab toggle "* gms\n* tola"
-// Everything AFTER "* tola" line is the tola section
-// We extract all <b>DIGITS</b> from tola section only:
-//   index 0 = Fine Gold tola
-//   index 1 = Tejabi tola (skip)
-//   index 2 = Silver tola
-
-function parsePrices(html) {
-  let gold = null, silver = null;
-
-  // Split at the tola section marker
-  // The page has "* tola" as a list item separating gms from tola prices
-  const tolaSplit = html.split(/\*\s*tola/i);
-  const tolaSection = tolaSplit.length > 1 ? tolaSplit[tolaSplit.length - 1] : html;
-
-  // Extract all <b>NUMBER</b> from tola section
-  const bTags = [...tolaSection.matchAll(/<b>(\d+)<\/b>/g)].map(m => parseInt(m[1]));
-  console.log('📊 Tola section <b> values:', bTags);
-
-  // index 0 = Fine Gold, index 1 = Tejabi, index 2 = Silver
-  if (bTags.length >= 1 && bTags[0] > 100000 && bTags[0] < 600000) {
-    gold = bTags[0];
-    console.log('✅ Gold per tola:', gold);
-  }
-  if (bTags.length >= 3 && bTags[2] > 500 && bTags[2] < 50000) {
-    silver = bTags[2];
-    console.log('✅ Silver per tola:', silver);
-  }
-
-  // Gold fallback: any 6-digit <b> in full HTML
-  if (!gold) {
-    for (const m of [...html.matchAll(/<b>(\d+)<\/b>/g)]) {
-      const p = parseInt(m[1]);
-      if (p > 100000 && p < 600000) { gold = p; console.log('⚠️  Gold fallback:', gold); break; }
-    }
-  }
-
-  return { gold, silver };
-}
-
-// ── Firestore PATCH (update/create doc) ──
-function writeDoc(docPath, fields) {
+// ── Write to Firestore via REST API ──
+function writeToFirestore(price) {
   return new Promise((resolve, reject) => {
-    const body = JSON.stringify({ fields });
+    const body = JSON.stringify({
+      fields: {
+        rate:        { integerValue: String(price) },
+        updatedBy:   { stringValue: 'auto@github-actions' },
+        lastUpdated: { stringValue: new Date().toISOString() },
+        source:      { stringValue: 'fenegosida.org' },
+        note:        { stringValue: 'Fine Gold (9999) per tola' }
+      }
+    });
+
     const urlObj = new URL(
-      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${docPath}?key=${API_KEY}`
+      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/global_data/gold_info?key=${API_KEY}`
     );
+
     const req = https.request({
       hostname: urlObj.hostname,
       path:     urlObj.pathname + urlObj.search,
       method:   'PATCH',
-      headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      headers: {
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
     }, (res) => {
       let data = '';
-      res.on('data', c => data += c);
+      res.on('data', chunk => data += chunk);
       res.on('end', () => {
         if (res.statusCode === 200) resolve(JSON.parse(data));
-        else reject(new Error('Firestore PATCH ' + res.statusCode + ': ' + data));
+        else reject(new Error('Firestore error ' + res.statusCode + ': ' + data));
       });
     });
+
     req.on('error', reject);
-    req.write(body); req.end();
+    req.write(body);
+    req.end();
   });
 }
 
-// ── Firestore POST (add to collection, auto-ID) ──
-function postDoc(col, fields) {
-  return new Promise((resolve) => {
-    const body = JSON.stringify({ fields });
+// ── Also log to gold_history collection ──
+function logToHistory(price) {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      fields: {
+        rate:      { integerValue: String(price) },
+        updatedBy: { stringValue: 'auto@github-actions' },
+        timestamp: { stringValue: new Date().toISOString() },
+        source:    { stringValue: 'fenegosida.org' },
+        note:      { stringValue: 'Fine Gold (9999) per tola' }
+      }
+    });
+
     const urlObj = new URL(
-      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/${col}?key=${API_KEY}`
+      `https://firestore.googleapis.com/v1/projects/${PROJECT_ID}/databases/(default)/documents/gold_history?key=${API_KEY}`
     );
+
     const req = https.request({
       hostname: urlObj.hostname,
       path:     urlObj.pathname + urlObj.search,
       method:   'POST',
-      headers:  { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) }
+      headers: {
+        'Content-Type':   'application/json',
+        'Content-Length': Buffer.byteLength(body)
+      }
     }, (res) => {
       let data = '';
-      res.on('data', c => data += c);
+      res.on('data', chunk => data += chunk);
       res.on('end', () => resolve(data));
     });
-    req.on('error', e => resolve('skipped: ' + e.message));
-    req.write(body); req.end();
-  });
-}
 
-function makeFields(rate, note) {
-  return {
-    rate:        { integerValue: String(rate) },
-    updatedBy:   { stringValue: 'auto@github-actions' },
-    lastUpdated: { stringValue: new Date().toISOString() },
-    source:      { stringValue: 'fenegosida.org' },
-    note:        { stringValue: note }
-  };
+    req.on('error', e => resolve('history log skipped: ' + e.message));
+    req.write(body);
+    req.end();
+  });
 }
 
 // ── Main ──
 async function main() {
-  console.log('🕘 Gold + Silver auto-fetch starting...');
+  console.log('🕘 Gold price auto-fetch starting...');
   console.log('📅 Time (UTC):', new Date().toISOString());
-  console.log('🌐 Source: fenegosida.org');
+  console.log('🌐 Source: fenegosida.org (Nepal Gold & Silver Dealers Federation)');
 
   let html = null;
   try {
+    console.log('🌐 Fetching https://fenegosida.org/');
     html = await get('https://fenegosida.org/');
     console.log('📄 Page size:', Math.round(html.length / 1024) + 'KB');
+
     if (!html.includes('FINE GOLD') && !html.includes('tola')) {
-      throw new Error('No gold data found — site may have changed.');
+      throw new Error('Page fetched but no gold data found — site structure may have changed.');
     }
   } catch (e) {
     console.error('❌ Fetch failed:', e.message);
     process.exit(1);
   }
 
-  const { gold, silver } = parsePrices(html);
-
-  // ── GOLD ──
-  if (!gold) {
-    console.error('❌ Could not parse gold price.');
+  const price = parseGoldPrice(html);
+  if (!price) {
+    console.error('❌ Could not parse gold price from fenegosida.org');
     process.exit(1);
   }
-  console.log('💰 Gold (per tola): NPR', gold.toLocaleString());
+
+  console.log('💰 Fine Gold price (per tola): NPR', price.toLocaleString());
+
   try {
-    await writeDoc('global_data/gold_info', makeFields(gold, 'Fine Gold (9999) per tola'));
-    console.log('🔥 Gold → global_data/gold_info');
+    await writeToFirestore(price);
+    console.log('🔥 Successfully written to Firestore!');
   } catch (e) {
-    console.error('❌ Gold write failed:', e.message);
+    console.error('❌ Firestore write failed:', e.message);
     process.exit(1);
   }
-  try {
-    await postDoc('gold_history', makeFields(gold, 'Fine Gold (9999) per tola'));
-    console.log('📋 Gold → gold_history');
-  } catch (e) { console.log('⚠️  Gold history skipped:', e.message); }
 
-  // ── SILVER ──
-  if (!silver) {
-    console.warn('⚠️  Could not parse silver price — skipping.');
-  } else {
-    console.log('🥈 Silver (per tola): NPR', silver.toLocaleString());
-    try {
-      await writeDoc('global_data/silver_info', makeFields(silver, 'Silver per tola'));
-      console.log('🔥 Silver → global_data/silver_info');
-    } catch (e) { console.error('❌ Silver write failed:', e.message); }
-    try {
-      await postDoc('silver_history', makeFields(silver, 'Silver per tola'));
-      console.log('📋 Silver → silver_history');
-    } catch (e) { console.log('⚠️  Silver history skipped:', e.message); }
+  try {
+    await logToHistory(price);
+    console.log('📋 Logged to gold_history collection');
+  } catch (e) {
+    console.log('⚠️  History log skipped:', e.message);
   }
 
-  console.log('');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('✅ Done!');
-  console.log('   gold_info.rate   =', gold);
-  if (silver) console.log('   silver_info.rate =', silver);
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
+  console.log('✅ Done. gold_info.rate =', price);
 }
 
 main();
