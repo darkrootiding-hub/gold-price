@@ -12,13 +12,15 @@ if (!PROJECT_ID || !API_KEY) {
   process.exit(1);
 }
 
-// ── Fetch URL (follows redirects) ──
+// ── Fetch URL ──
 function get(url) {
   return new Promise((resolve, reject) => {
     const req = https.get(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (compatible; SilverBot/1.0)',
-        'Accept':     'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept':     'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Cache-Control':   'no-cache',
       }
     }, (res) => {
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
@@ -33,8 +35,33 @@ function get(url) {
       res.on('end', () => resolve(data));
     });
     req.on('error', reject);
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout')); });
+    req.setTimeout(20000, () => { req.destroy(); reject(new Error('Timeout')); });
   });
+}
+
+// ── Multi-strategy fetch (bypass IP blocking) ──
+async function fetchFenegosida() {
+  const TARGET = 'https://fenegosida.org/';
+  const strategies = [
+    { name: 'Direct',      url: TARGET },
+    { name: 'allorigins',  url: 'https://api.allorigins.win/raw?url=' + encodeURIComponent(TARGET) },
+    { name: 'corsproxy',   url: 'https://corsproxy.io/?' + encodeURIComponent(TARGET) },
+    { name: 'codetabs',    url: 'https://api.codetabs.com/v1/proxy?quest=' + encodeURIComponent(TARGET) },
+    { name: 'thingproxy',  url: 'https://thingproxy.freeboard.io/fetch/' + TARGET },
+  ];
+  for (const s of strategies) {
+    try {
+      console.log('🌐 Trying:', s.name);
+      const html = await get(s.url);
+      if (html && html.includes('SILVER')) {
+        console.log('✅', s.name, 'succeeded');
+        return html;
+      }
+    } catch (e) {
+      console.log('⚠️ ', s.name, 'failed:', e.message);
+    }
+  }
+  throw new Error('All fetch strategies failed.');
 }
 
 // ── Parse silver price (per tola) from fenegosida.org ──
@@ -170,12 +197,8 @@ async function main() {
 
   let html = null;
   try {
-    console.log('🌐 Fetching https://fenegosida.org/');
-    html = await get('https://fenegosida.org/');
+    html = await fetchFenegosida();
     console.log('📄 Page size:', Math.round(html.length / 1024) + 'KB');
-    if (!html.includes('SILVER')) {
-      throw new Error('No silver data found — site structure may have changed.');
-    }
   } catch (e) {
     console.error('❌ Fetch failed:', e.message);
     process.exit(1);
